@@ -1,0 +1,105 @@
+from pytrends.request import TrendReq
+import pandas as pd
+import time
+import sqlite3
+import matplotlib.pyplot as plt
+import seaborn as sns
+import requests
+import tweepy
+from googleapiclient.discovery import build
+import smtplib
+import praw
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+import streamlit as st
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+
+def create_database():
+    conn = sqlite3.connect("trends.db")
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS trends (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        trend TEXT,
+                        search_volume INTEGER,
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    conn.commit()
+    conn.close()
+
+def store_trend(trend, search_volume):
+    conn = sqlite3.connect("trends.db")
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO trends (trend, search_volume) VALUES (?, ?)", (trend, search_volume))
+    conn.commit()
+    conn.close()
+
+def retrieve_trends(limit=10):
+    conn = sqlite3.connect("trends.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT trend, search_volume, timestamp FROM trends ORDER BY timestamp DESC LIMIT ?", (limit,))
+    trends = cursor.fetchall()
+    conn.close()
+    return trends
+
+def filter_trends_nlp(trends):
+    vectorizer = TfidfVectorizer(stop_words='english')
+    X = vectorizer.fit_transform(trends)
+    kmeans = KMeans(n_clusters=5, random_state=42).fit(X)
+    filtered_trends = [trends[i] for i in range(len(trends)) if kmeans.labels_[i] == 0]
+    return filtered_trends
+
+def send_email_summary(recipient_email):
+    trends = retrieve_trends(10)
+    subject = "Daily Trending Summary"
+    body = "Here are today's top trends:\n\n" + "\n".join([f"{t[2]}: {t[0]} - Search Volume: {t[1]}" for t in trends])
+    email_text = f"Subject: {subject}\n\n{body}"
+    
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(st.secrets["EMAIL_USER"], st.secrets["EMAIL_PASS"])
+        server.sendmail(st.secrets["EMAIL_USER"], recipient_email, email_text)
+    
+    print("Daily trend summary email sent.")
+
+def dashboard():
+    st.title("Trending Topics Dashboard")
+    st.subheader("Latest Trending Topics")
+    trends = retrieve_trends(10)
+    df = pd.DataFrame(trends, columns=["Trend", "Search Volume", "Timestamp"])
+    st.dataframe(df)
+    
+    st.subheader("Search Trends")
+    search_query = st.text_input("Search for a trend:")
+    if search_query:
+        filtered_df = df[df["Trend"].str.contains(search_query, case=False, na=False)]
+        st.dataframe(filtered_df)
+    
+    st.subheader("Trend Search Volume Over Time")
+    if not df.empty:
+        plt.figure(figsize=(10,5))
+        sns.lineplot(x=df["Timestamp"], y=df["Search Volume"], marker="o")
+        plt.xticks(rotation=45)
+        plt.xlabel("Timestamp")
+        plt.ylabel("Search Volume")
+        plt.title("Search Volume Trend Over Time")
+        st.pyplot(plt)
+
+def main():
+    create_database()
+    google_trends = get_google_trends()
+    twitter_trends = get_twitter_trends(st.secrets["API_KEY"], st.secrets["API_SECRET"], st.secrets["ACCESS_TOKEN"], st.secrets["ACCESS_SECRET"])
+    youtube_trends = get_youtube_trends(st.secrets["YOUTUBE_API_KEY"])
+    reddit_trends = get_reddit_trends(st.secrets["REDDIT_CLIENT_ID"], st.secrets["REDDIT_CLIENT_SECRET"], st.secrets["USER_AGENT"])
+    tiktok_trends = get_tiktok_trends()
+    all_trends = google_trends + twitter_trends + youtube_trends + reddit_trends + tiktok_trends
+    all_trends = filter_trends_nlp(all_trends)
+    rank_trends(all_trends)
+    retrieve_trends()
+    send_email_summary("recipient@example.com")
+    print("\nTrends stored in database (trends.db)")
+
+dashboard()
+
+if __name__ == "__main__":
+    main()
