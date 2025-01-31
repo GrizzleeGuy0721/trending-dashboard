@@ -1,17 +1,18 @@
 #!/bin/bash
+
 echo "🚀 Pulling latest changes from GitHub..."
-git pull origin main --rebase
+git pull origin main
 
 echo "🔍 Checking for uncommitted changes..."
-git add .
-git commit -m "Automated update: Fixes & improvements" || echo "No changes to commit"
-
-echo "📤 Pushing updates to GitHub..."
-git push origin main
+if ! git diff --quiet; then
+    git add .
+    git commit -m "Automated update: Fixes & improvements"
+    git push origin main
+fi
 
 echo "📦 Installing dependencies..."
 pip install -r requirements.txt
 
 echo "🔄 Restarting Streamlit App..."
-streamlit run google_trends_scraper.py
-#\!/bin/bash
+pkill -f streamlit
+streamlit run google_trends_scraper.py --server.port 8501
